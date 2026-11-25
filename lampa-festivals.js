@@ -18,55 +18,14 @@
     function select(title, items, callback, back) {
         Lampa.Select.show({title:title,items:items,onSelect:callback,onBack:back || function(){Lampa.Controller.toggle('menu');}});
     }
-    function openCard(card){
-        card.source='tmdb'; card.media_type='movie';
-        Lampa.Activity.push({id:card.id,method:'movie',source:'tmdb',component:'full',card:card});
-    }
-    function request(url,done,fail){
-        try { Lampa.Api.sources.tmdb.list({url:url,page:1,source:'tmdb'},done,fail); } catch(e){fail(e);}
-    }
-    function normalize(s){return String(s||'').toLowerCase().replace(/[^a-z0-9\u0400-\u04ff]/g,'');}
-    function resolve(f,done){
-        request('search/movie?query='+encodeURIComponent(f[1])+'&year='+f[2],function(data){
-            var hits=(data&&data.results)||[]; var exact=hits.filter(function(c){return String(c.release_date||'').slice(0,4)===f[2]&&(normalize(c.title)===normalize(f[1])||normalize(c.original_title)===normalize(f[1]));});
-            if(exact.length===1){exact[0].source='tmdb';done(exact[0]);}else done(null);
-        },function(){done(null);});
-    }
-    function search(f){if(Lampa.Search&&Lampa.Search.open)Lampa.Search.open({input:f[1]});else Lampa.Noty.show('Поиск: '+f[1]);}
-    function grid(title,cards,missing,back){
-        if(!cards.length){fallback(title,missing,back);return;}
-        Lampa.Activity.push({title:title,component:'festivals_grid_v3',url:'',source:'tmdb',page:1,films:cards,missing:missing});
-    }
-    function fallback(title,missing,back){
-        if(!missing.length){Lampa.Noty.show('Нет результатов TMDB');back();return;}
-        select(title+' — поиск',missing.map(function(f){return {title:f[0]+' — '+f[1],film:f};}),function(i){search(i.film);},back);
-    }
+    function list(url,title){Lampa.Activity.push({url:url,title:title,component:'category_full',source:'tmdb',page:1});}
+    function findFilm(f){try { if(!Lampa.Search || typeof Lampa.Search.open !== 'function') throw new Error('Search API unavailable'); Lampa.Search.open({input:f[1]}); } catch(e){Lampa.Noty.show('Ошибка поиска: '+e.message); console.error('Festivals search',e);}}
     function films(group){
-        var rows=group.films.map(function(s){return s.split('|');}),cards=[],missing=[],i=0;
-        Lampa.Noty.show('Загрузка постеров: '+group.name);
-        function next(){if(i>=rows.length){grid(group.name,cards,missing,menu);return;}var f=rows[i++];resolve(f,function(c){if(c)cards.push(c);else missing.push(f);next();});}
-        next();
+        var items=group.films.map(function(line){var f=line.split('|');return {title:f[0]+' — '+f[1],film:f};});
+        select(group.name,items,function(item){var f=item.film;setTimeout(function(){findFilm(f);},250);},menu);
     }
-    function years(){var items=[];for(var y=new Date().getFullYear();y>=1950;y--)items.push({title:String(y),year:y});select('Лучшие фильмы по годам — TMDB',items,function(item){var title='Лучшие фильмы '+item.year;request('discover/movie?primary_release_year='+item.year+'&sort_by=vote_average.desc&vote_count.gte=100&include_adult=false',function(d){var cards=(d&&d.results)||[];if(cards.length)grid(title,cards,[],years);else {Lampa.Noty.show('TMDB не вернул фильмы');years();}},function(){Lampa.Noty.show('Ошибка подключения к TMDB');years();});},menu);}
-    function component(object){
-        var html=$('<div class="festivals-v3" style="padding:1.5em"><div class="festivals-v3-grid" style="display:flex;flex-wrap:wrap;gap:1em"></div></div>');
-        var scroll=new Lampa.Scroll({mask:true,over:true}); var last;
-        var self=this;
-        this.create=function(){
-            var target=html.find('.festivals-v3-grid');
-            object.films.forEach(function(c){var el=$('<div class="selector" style="width:9em;position:relative"><div style="height:13.5em;background:#333;border-radius:.5em;overflow:hidden"><img style="width:100%;height:100%;object-fit:cover"/></div><div class="festival-title" style="margin-top:.4em"></div><div class="festival-meta" style="opacity:.7;font-size:.85em"></div></div>');
-                if(c.poster_path)el.find('img').attr('src','https://image.tmdb.org/t/p/w342'+c.poster_path);else el.find('img').remove();
-                el.find('.festival-title').text(c.title||c.original_title);el.find('.festival-meta').text(String(c.release_date||'').slice(0,4)+'  ★ '+Number(c.vote_average||0).toFixed(1));
-                el.on('hover:focus',function(){last=el[0];scroll.update(el);});el.on('hover:enter',function(){openCard(c);});target.append(el);
-            });
-            if(object.missing.length){var extra=$('<div class="selector" style="padding:1em;border:1px solid #888"></div>').text('Найти остальные фильмы ('+object.missing.length+')');extra.on('hover:focus',function(){last=extra[0];scroll.update(extra);});extra.on('hover:enter',function(){fallback(object.title,object.missing,function(){Lampa.Controller.toggle('content');});});target.append(extra);}
-            scroll.append(html);return this.render();
-        };
-        this.render=function(){return scroll.render();};
-        this.start=function(){Lampa.Controller.add('content',{toggle:function(){Lampa.Controller.collectionSet(html);Lampa.Controller.collectionFocus(last||false,html);},up:function(){Lampa.Navigator.move('up');},down:function(){Lampa.Navigator.move('down');},left:function(){if(Lampa.Navigator.canmove('left'))Lampa.Navigator.move('left');else Lampa.Controller.toggle('menu');},right:function(){Lampa.Navigator.move('right');},back:function(){Lampa.Activity.backward();}});Lampa.Controller.toggle('content');};
-        this.pause=function(){};this.stop=function(){};this.destroy=function(){scroll.destroy();html.remove();};
-    }
-    function menu(){var items=groups.map(function(g,i){return {title:g.name,index:i};});items.push({title:'Лучшие фильмы по годам',index:-1});items=[items[4],items[5],items[6]].concat(items.slice(0,4));select('Кинофестивали',items,function(item){if(item.index===-1)years();else films(groups[item.index]);});}
-    function init(){if(ready || window.lampa_festivals_v3)return;var target=$('.menu .menu__list').eq(0);if(!target.length)return;var button=$('<li class="menu__item selector"><div class="menu__ico"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3h8v6a4 4 0 0 1-8 0V3ZM8 5H3v2a5 5 0 0 0 5 5m8-7h5v2a5 5 0 0 1-5 5M12 13v6m-5 2h10"/></svg></div><div class="menu__text">Кинофестивали</div></li>');button.on('hover:enter',menu);Lampa.Component.add('festivals_grid_v3',component);target.append(button);ready=true;window.lampa_festivals_v3=true;}
+    function years(){var items=[];for(var y=new Date().getFullYear();y>=1950;y--){items.push({title:String(y),year:y});}select('Лучшие фильмы по годам — TMDB',items,function(item){list('discover/movie?primary_release_year='+item.year+'&sort_by=vote_average.desc&vote_count.gte=30&include_adult=false','Лучшие фильмы '+item.year+' — TMDB');},menu);}
+    function menu(){var items=groups.map(function(g,i){return {title:g.name,index:i};});items.push({title:'Лучшие фильмы по годам',index:-1});items = [items[4],items[5],items[6]].concat(items.slice(0,4));select('Кинофестивали 3.1',items,function(item){if(item.index===-1)years();else films(groups[item.index]);});}
+    function init(){if(ready || window.lampa_festivals_v31)return;var target=$('.menu .menu__list').eq(0);if(!target.length)return;var button=$('<li class="menu__item selector"><div class="menu__ico"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3h8v6a4 4 0 0 1-8 0V3ZM8 5H3v2a5 5 0 0 0 5 5m8-7h5v2a5 5 0 0 1-5 5M12 13v6m-5 2h10"/></svg></div><div class="menu__text">Кинофестивали</div></li>');button.on('hover:enter',menu);target.append(button);ready=true;window.lampa_festivals_v31=true;}
     if(window.appready)init();else Lampa.Listener.follow('app',function(e){if(e.type==='ready')init();});
 })();
